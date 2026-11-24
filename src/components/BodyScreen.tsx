@@ -4,6 +4,9 @@ import type { BodyComposition } from '../types';
 import { toLocalDateTime } from '../lib/dates';
 import type { AppData } from './useAppData';
 import { NumField, f1 } from './ui';
+import { PhotoRunner } from './PhotoRunner';
+import { analyzeSheet } from '../lib/aiPrompts';
+import { FIELD_LABEL, NUM_FIELDS, diffMappings, parseNumber, resolveSheet, sheetToRecord, type NumField as NF, type SheetParse } from '../lib/sheet';
 
 const blank = (): BodyComposition => ({
   id: newId(), measuredAt: toLocalDateTime(), source: 'manual', weightKg: 0, bodyFatPercent: null, bodyFatKg: null,
@@ -11,16 +14,56 @@ const blank = (): BodyComposition => ({
 });
 
 export function BodyScreen({ data }: { data: AppData }) {
-  const [form, setForm] = useState<{ rec: BodyComposition; isNew: boolean } | null>(null);
+  const [form, setForm] = useState<{ rec: BodyComposition; isNew: boolean; sheet?: { raw: SheetParse['rawItems']; assign: (NF | null)[] } } | null>(null);
+  const [scan, setScan] = useState(false);
   const list = [...data.body].sort((a, b) => b.measuredAt.localeCompare(a.measuredAt));
 
+  if (scan) {
+    return (
+      <div className="card">
+        <h2>シートを写真で読み取る</h2>
+        <PhotoRunner
+          notice="撮影前に:氏名・会員番号などが写らないようにしてください(写真は Google に送信されます)。"
+          run={async (img) => {
+            const p = await analyzeSheet(db, img);
+            return { p, r: resolveSheet(p, await db.sheetMappings.toArray()) };
+          }}
+          onCancel={() => setScan(false)}
+          onResult={({ p, r }) => {
+            const rec = { id: newId(), ...sheetToRecord(p, r.values, toLocalDateTime()) };
+            setForm({ rec, isNew: true, sheet: { raw: p.rawItems, assign: r.assignments } });
+            setScan(false);
+          }} />
+      </div>
+    );
+  }
   if (form) {
     const r = form.rec;
     const p = (x: Partial<BodyComposition>) => setForm({ ...form, rec: { ...r, ...x } });
     return (
       <div className="card">
         <h2>{form.isNew ? '体組成を記録' : '体組成を編集'}</h2>
-        <p className="muted">シートに載っている項目だけ入力し、ない項目は空欄のままで構いません。</p>
+        <p className="muted">{form.sheet ? '読み取り結果です。「読み取れませんでした」の項目は空欄です。内容を確認・修正して保存してください(保存するまで記録されません)。' : 'シートに載っている項目だけ入力し、ない項目は空欄のままで構いません。'}</p>
+        {form.sheet && (
+          <div className="card" style={{ background: '#f9fafb' }}>
+            <h3>シートの項目と記録項目の対応(変更した対応は次回の初期値になります)</h3>
+            {form.sheet.raw.length === 0 && <p className="muted">項目を読み取れませんでした。</p>}
+            {form.sheet.raw.map((it, i) => (
+              <div className="row" key={i} style={{ marginBottom: 6 }}>
+                <div style={{ flex: 2 }}>{it.label}<div className="muted">{it.value}</div></div>
+                <select value={form.sheet!.assign[i] ?? ''} onChange={(e) => {
+                  const f = (e.target.value || null) as NF | null;
+                  const assign = form.sheet!.assign.map((a, j) => (j === i ? f : a));
+                  const n = parseNumber(it.value);
+                  setForm({ ...form, rec: f && n != null ? { ...r, [f]: n } : r, sheet: { ...form.sheet!, assign } });
+                }}>
+                  <option value="">対応なし</option>
+                  {NUM_FIELDS.map((f) => <option key={f} value={f}>{FIELD_LABEL[f]}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
         <label>測定日時</label>
         <input type="datetime-local" value={r.measuredAt} onChange={(e) => e.target.value && p({ measuredAt: e.target.value })} />
         <div className="grid2">
@@ -39,7 +82,13 @@ export function BodyScreen({ data }: { data: AppData }) {
         <input value={r.memo ?? ''} onChange={(e) => p({ memo: e.target.value })} placeholder="例:トレーニング後" />
         <div className="row" style={{ marginTop: 12 }}>
           <button className="sub" onClick={() => setForm(null)}>キャンセル</button>
-          <button disabled={!(r.weightKg > 0)} onClick={async () => { await db.body.put({ ...r, memo: r.memo || undefined }); setForm(null); }}>保存</button>
+          <button disabled={!(r.weightKg > 0)} onClick={async () => { await db.body.put({ ...r, memo: r.memo || undefined });
+            if (form.sheet) {
+              const d = diffMappings(form.sheet.raw, form.sheet.assign, await db.sheetMappings.toArray());
+              await db.sheetMappings.bulkPut(d.toSave);
+              await db.sheetMappings.bulkDelete(d.toDelete);
+            }
+            setForm(null); }}>保存</button>
         </div>
         {!form.isNew && <button className="danger" style={{ width: '100%', marginTop: 12 }}
           onClick={async () => { if (confirm('削除しますか?')) { await db.body.delete(r.id); setForm(null); } }}>削除</button>}
@@ -49,7 +98,10 @@ export function BodyScreen({ data }: { data: AppData }) {
   return (
     <div>
       <h1>体組成・体重</h1>
-      <button style={{ width: '100%', marginBottom: 12 }} onClick={() => setForm({ rec: blank(), isNew: true })}>＋ 体組成を記録</button>
+      <div className="row" style={{ marginBottom: 12 }}>
+        <button onClick={() => setForm({ rec: blank(), isNew: true })}>＋ 手入力で記録</button>
+        <button className="sub" onClick={() => setScan(true)}>📷 シートを読み取る</button>
+      </div>
       <div className="card">
         {list.length === 0 && <p className="muted">記録がありません。</p>}
         {list.map((b) => (

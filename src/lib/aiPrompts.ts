@@ -1,6 +1,7 @@
 import type { Source, MealItem } from '../types';
 import type { AppDb } from '../db';
 import { callGemini } from './gemini';
+import { LABEL_SCHEMA, SHEET_SCHEMA, parseLabelResponse, parseSheetResponse } from './sheet';
 import { ITEMS_SCHEMA, OPERATIONS_SCHEMA, parseItemsResponse, parseOperationsResponse } from './aiParse';
 
 const COMMON = `あなたは日本の食事の栄養を推定するアシスタントです。
@@ -44,4 +45,28 @@ export async function requestCorrection(db: AppDb, items: MealItem[], instructio
     schema: OPERATIONS_SCHEMA,
   });
   return parseOperationsResponse(json, items.length, source);
+}
+
+export async function analyzeSheet(db: AppDb, image: { mimeType: string; data: string }) {
+  const json = await callGemini(db, {
+    system: `あなたは体組成計の結果シートの写真から数値を読み取るアシスタントです。
+- シートに書かれている「項目名と数値」のペアを、すべて raw_items に、書かれたとおり(項目名・値と単位)抽出する。
+- 既知の項目(体重、体脂肪率、体脂肪量、筋肉量、骨格筋量、除脂肪体重、内臓脂肪レベル、体水分量、BMI、基礎代謝)は、対応する項目に数値だけを入れる。
+- シートに載っていない項目・読み取れない数値は必ず null にする。推測や計算で埋めてはいけない。
+- 測定日時が読み取れれば measured_at に YYYY-MM-DDTHH:mm で入れ、読み取れなければ null。
+- 氏名・会員番号などの個人情報は出力しない。`,
+    text: 'この体組成シートの写真を読み取ってください。', image, schema: SHEET_SCHEMA,
+  });
+  return parseSheetResponse(json);
+}
+
+export async function analyzeLabel(db: AppDb, image: { mimeType: string; data: string }) {
+  const json = await callGemini(db, {
+    system: `あなたは食品パッケージの栄養成分表示を読み取るアシスタントです。
+- 表示されている数値だけを返す。「100gあたり」表示なら serving_amount=100、serving_unit="g" として、その値を返す。
+- 食塩相当量の記載があれば salt_g に入れる。
+- 表示にない項目・読み取れない項目は null にする。推測で埋めてはいけない。`,
+    text: 'この栄養成分表示を読み取ってください。', image, schema: LABEL_SCHEMA,
+  });
+  return parseLabelResponse(json);
 }

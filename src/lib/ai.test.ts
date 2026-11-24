@@ -110,3 +110,52 @@ describe('AI応答の解析と文章による修正', () => {
     expect(p.notes).toBe('解釈できません');
   });
 });
+
+import { diffMappings, parseLabelResponse, parseNumber, parseSheetResponse, resolveSheet, sheetToRecord } from './sheet';
+
+const sheetJson = (o: object = {}) => ({
+  measured_at: '2026-11-24T18:30', weight_kg: 70.2, body_fat_percent: 15.1, body_fat_kg: null, muscle_kg: null, skeletal_muscle_kg: 32.4,
+  lean_body_mass_kg: null, visceral_fatlevel: 5, visceral_fat_level: null, body_water_l: null, bmi: null, bmr_kcal: null,
+  raw_items: [{ label: '体重', value: '70.2kg' }, { label: '筋肉スコア', value: '３４．１ kg' }, { label: '体年齢', value: '28歳' }], ...o,
+});
+
+describe('体組成シートの読み取り', () => {
+  it('シートにない項目は null のまま(値に含まれず、記録でも null)', () => {
+    const p = parseSheetResponse(sheetJson());
+    expect(p.values).toEqual({ weightKg: 70.2, bodyFatPercent: 15.1, skeletalMuscleKg: 32.4 });
+    const rec = sheetToRecord(p, p.values, 'NOW');
+    expect(rec.bodyFatKg).toBeNull(); expect(rec.muscleKg).toBeNull(); expect(rec.bmrKcal).toBeNull();
+    expect(rec.measuredAt).toBe('2026-11-24T18:30'); expect(rec.source).toBe('ai_sheet');
+  });
+  it('不正な値(負数・文字列)は捨てる / 測定日時が不正なら null', () => {
+    const p = parseSheetResponse(sheetJson({ weight_kg: -5, body_fat_percent: '15', measured_at: 'きのう' }));
+    expect(p.values).toEqual({ skeletalMuscleKg: 32.4 });
+    expect(p.measuredAt).toBeNull();
+    expect(sheetToRecord(p, p.values, 'NOW').measuredAt).toBe('NOW');
+  });
+  it('raw_items が無い応答は拒否', () => expect(() => parseSheetResponse({ weight_kg: 1 })).toThrow());
+  it('全角・単位つきの数値を読める', () => {
+    expect(parseNumber('３４．１ kg')).toBe(34.1); expect(parseNumber('1,650kcal')).toBe(1650); expect(parseNumber('なし')).toBeNull();
+  });
+  it('保存済みの対応付けが次回の初期値になる', () => {
+    const p = parseSheetResponse(sheetJson());
+    const r = resolveSheet(p, [{ label: '筋肉スコア', field: 'muscleKg' }]);
+    expect(r.values.muscleKg).toBe(34.1);
+    expect(r.assignments).toEqual([null, 'muscleKg', null]);
+    expect(resolveSheet(p, []).values.muscleKg).toBeUndefined(); // 対応が無ければ捏造しない
+  });
+  it('対応付けの保存・削除を決める', () => {
+    const p = parseSheetResponse(sheetJson());
+    const d = diffMappings(p.rawItems, [null, 'muscleKg', null], [{ label: '体重', field: 'weightKg' }]);
+    expect(d.toSave).toEqual([{ label: '筋肉スコア', field: 'muscleKg' }]);
+    expect(d.toDelete).toEqual(['体重']);
+  });
+});
+
+describe('栄養成分表示の読み取り', () => {
+  it('読み取れなかった項目を unread に挙げる(捏造しない)', () => {
+    const l = parseLabelResponse({ product_name: 'プロテイン', serving_amount: 30, serving_unit: 'g', calories_kcal: 115, protein_g: 23, fat_g: 1.5, carbs_g: null, fiber_g: null, salt_g: 0.2 });
+    expect(l.unread).toEqual(['炭水化物', '食物繊維']);
+    expect(l.saltG).toBe(0.2); expect(l.fiberG).toBeNull();
+  });
+});

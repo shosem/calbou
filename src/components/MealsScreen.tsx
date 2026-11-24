@@ -7,6 +7,8 @@ import type { AppData } from './useAppData';
 import { ItemForm, blankItem } from './ItemForm';
 import { NumField, f1 } from './ui';
 import { AiPanel } from './AiPanel';
+import { PhotoRunner } from './PhotoRunner';
+import { analyzeLabel } from '../lib/aiPrompts';
 
 export async function addItemsToMeal(date: string, category: Category, items: MealItem[]) {
   await db.transaction('rw', db.meals, async () => {
@@ -138,17 +140,34 @@ function MyFoodPicker({ foods, onPick }: { foods: MyFood[]; onPick: (i: MealItem
 
 function MyFoodEditor({ initial, onDone }: { initial: MyFood | null; onDone: () => void }) {
   const [category, setCategory] = useState<MyFood['category']>(initial?.category ?? 'food');
-  const item: MealItem = initial
+  const [scan, setScan] = useState(false);
+  const [scanned, setScanned] = useState<{ item: MealItem; unread: string[] } | null>(null);
+  if (scan) {
+    return (
+      <div>
+        <h3>栄養成分表示を写真で読み取る</h3>
+        <PhotoRunner notice="パッケージの栄養成分表示の部分を撮影してください。" onCancel={() => setScan(false)}
+          run={(img) => analyzeLabel(db, img)}
+          onResult={(l) => {
+            setScanned({ item: { ...blankItem(), name: l.name, amount: l.servingAmount, unit: l.servingUnit, caloriesKcal: l.caloriesKcal, proteinG: l.proteinG, fatG: l.fatG, carbsG: l.carbsG, fiberG: l.fiberG, saltG: l.saltG, source: 'ai_label' }, unread: l.unread });
+            setScan(false);
+          }} />
+      </div>
+    );
+  }
+  const item: MealItem = scanned ? scanned.item : initial
     ? { ...blankItem(), name: initial.name, amount: initial.servingAmount, unit: initial.servingUnit, caloriesKcal: initial.caloriesKcal, proteinG: initial.proteinG, fatG: initial.fatG, carbsG: initial.carbsG, fiberG: initial.fiberG, saltG: initial.saltG }
     : { ...blankItem(), unit: 'g' };
   return (
     <div>
       <h3>{initial ? 'マイ食品を編集' : 'マイ食品を登録'}(量=1回分の量、栄養素はその量あたり)</h3>
+      {!initial && !scanned && <button className="sub small" onClick={() => setScan(true)}>📷 栄養成分表示を写真で読み取る</button>}
+      {scanned && <p className="warn">読み取り結果です。確認・修正して保存してください(保存するまで登録されません)。{scanned.unread.length > 0 && <> 読み取れませんでした: {scanned.unread.join('、')}(空欄または0です。手入力してください)</>}</p>}
       <label>カテゴリ</label>
       <select value={category} onChange={(e) => setCategory(e.target.value as MyFood['category'])}>
         <option value="food">食品</option><option value="supplement">プロテイン・サプリ</option>
       </select>
-      <ItemForm initial={item} submitLabel="保存" showRescale={false} onCancel={onDone}
+      <ItemForm key={scanned ? 'scanned' : 'init'} initial={item} submitLabel="保存" showRescale={false} onCancel={onDone}
         onSubmit={async (it) => {
           const f: MyFood = { id: initial?.id ?? newId(), name: it.name, category, servingAmount: it.amount, servingUnit: it.unit, caloriesKcal: it.caloriesKcal, proteinG: it.proteinG, fatG: it.fatG, carbsG: it.carbsG, fiberG: it.fiberG, saltG: it.saltG };
           await db.myFoods.put(f); onDone();
