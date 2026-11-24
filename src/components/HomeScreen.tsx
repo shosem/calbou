@@ -4,6 +4,7 @@ import { CATEGORIES, CATEGORY_LABEL, backupDue, sumEntries, sumItems } from '../
 import { toLocalDate, toLocalDateTime } from '../lib/dates';
 import type { AppData } from './useAppData';
 import { Bar, NumField, f1 } from './ui';
+import { ProposalCard } from './ProposalCard';
 
 export function HomeScreen({ data, go }: { data: AppData; go: (t: 'meals' | 'settings') => void }) {
   const { settings, targets, latest } = data;
@@ -43,6 +44,8 @@ export function HomeScreen({ data, go }: { data: AppData; go: (t: 'meals' | 'set
           <span className={total.saltG > targets.saltG ? 'over' : ''}>塩分 {f1(total.saltG)} / {targets.saltG}g未満{total.saltG > targets.saltG ? '(超過)' : ''}</span>
         </div>
       </div>
+
+      <ProposalCard data={data} />
 
       <div className="card">
         <h2>今日の体重</h2>
