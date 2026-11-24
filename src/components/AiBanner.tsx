@@ -1,4 +1,4 @@
-import { clearTask, requestOpen, useTask } from '../lib/aiTask';
+import { clearTask, requestOpen, retryTask, useTask } from '../lib/aiTask';
 
 /** タブバーのすぐ上に出すAI処理の状況表示 */
 export function AiBanner({ go }: { go: (t: 'meals' | 'body') => void }) {
@@ -21,7 +21,9 @@ export function AiBanner({ go }: { go: (t: 'meals' | 'body') => void }) {
   }
   return (
     <div className="aibar error">
-      <span>⚠ {t.error}</span><button className="small sub fit" onClick={clearTask}>閉じる</button>
+      <span>⚠ {t.error}{t.retryable && <span className="mini"> 同じ内容でもう一度送れます(1回消費)</span>}</span>
+      {t.retryable && <button className="small fit" onClick={retryTask}>再試行</button>}
+      <button className="small sub fit" onClick={clearTask}>閉じる</button>
     </div>
   );
 }

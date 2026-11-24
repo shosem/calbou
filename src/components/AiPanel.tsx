@@ -7,7 +7,7 @@ import { aiStore, aiUnavailableReason } from '../lib/gemini';
 import { applyOperations, type DiffEntry, type Operation } from '../lib/aiParse';
 import { analyzePhoto, analyzeText, requestCorrection } from '../lib/aiPrompts';
 import { resizeToJpegBase64 } from '../lib/image';
-import { clearTask, startTask, useConsume, useTask } from '../lib/aiTask';
+import { clearTask, retryTask, startTask, useConsume, useTask } from '../lib/aiTask';
 import { toLocalDate } from '../lib/dates';
 import { ItemForm } from './ItemForm';
 import { f1 } from './ui';
@@ -162,7 +162,7 @@ export function Review({ review, onSave, onCancel }: { review: MealReview; onSav
             <button className="sub fit" disabled={blocked || !instr.trim() || !status.guard.ok} onClick={askCorrection}>{correcting ? '解析中…' : '修正(1回消費)'}</button></div>
           {correcting && <p className="muted">修正を解析中です。他の画面に移っても続き、完了すると画面下に表示されます。</p>}
           {!status.guard.ok && <p className="muted">本日はAIを使えません。各食品をタップして手で修正できます。</p>}
-          {task?.kind === 'correction' && task.phase === 'error' && <p className="err">{task.error} <button className="small sub" onClick={clearTask}>閉じる</button></p>}
+          {task?.kind === 'correction' && task.phase === 'error' && <p className="err">{task.error} {task.retryable && <button className="small" onClick={retryTask}>再試行(1回消費)</button>} <button className="small sub" onClick={clearTask}>閉じる</button></p>}
         </div>
       )}
 
