@@ -6,6 +6,7 @@ import { addDays, toLocalDate } from '../lib/dates';
 import type { AppData } from './useAppData';
 import { ItemForm, blankItem } from './ItemForm';
 import { NumField, f1 } from './ui';
+import { AiPanel } from './AiPanel';
 
 export async function addItemsToMeal(date: string, category: Category, items: MealItem[]) {
   await db.transaction('rw', db.meals, async () => {
@@ -72,7 +73,7 @@ export function MealsScreen({ data }: { data: AppData }) {
   );
 }
 
-type Tab = 'manual' | 'my' | 'history';
+type Tab = 'manual' | 'photo' | 'text' | 'my' | 'history';
 
 function AddPanel({ data, category, onClose, onAdd }: {
   data: AppData; category: Category; onClose: () => void; onAdd: (items: MealItem[]) => void;
@@ -82,11 +83,12 @@ function AddPanel({ data, category, onClose, onAdd }: {
     <div className="card">
       <div className="row between"><h2>{CATEGORY_LABEL[category]}に追加</h2><button className="sub small fit" onClick={onClose}>閉じる</button></div>
       <div className="tabs">
-        {([['manual', '手入力'], ['my', 'マイ食品'], ['history', '履歴']] as [Tab, string][]).map(([k, l]) => (
+        {([['manual', '手入力'], ['photo', '写真AI'], ['text', '文章AI'], ['my', 'マイ食品'], ['history', '履歴']] as [Tab, string][]).map(([k, l]) => (
           <button key={k} className={tab === k ? '' : 'sub'} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
       {tab === 'manual' && <ItemForm initial={blankItem()} submitLabel="追加" showRescale={false} onCancel={onClose} onSubmit={(it) => onAdd([it])} />}
+      {(tab === 'photo' || tab === 'text') && <AiPanel key={tab} mode={tab} onSave={onAdd} onCancel={onClose} />}
       {tab === 'my' && <MyFoodPicker foods={data.myFoods} onPick={(it) => onAdd([it])} />}
       {tab === 'history' && <HistoryPicker data={data} onPick={(it) => onAdd([it])} />}
     </div>

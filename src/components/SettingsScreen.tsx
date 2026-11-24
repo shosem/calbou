@@ -6,6 +6,10 @@ import type { AppSettings } from '../types';
 import type { AppData } from './useAppData';
 import { ProfileGoalForm } from './ProfileGoalForm';
 import { f1 } from './ui';
+import { CONSENT_TEXT, useAiStatus } from './AiPanel';
+import { DAILY_AI_LIMIT, clearStopped } from '../lib/aiGuard';
+import { GEMINI_MODEL, aiStore } from '../lib/gemini';
+import { toLocalDate } from '../lib/dates';
 
 export async function saveSettings(s: AppSettings, weightKg: number, currentWeight: number | null) {
   await db.settings.put({ ...s, onboarded: true });
@@ -59,12 +63,39 @@ export function SettingsScreen({ data, persisted }: { data: AppData; persisted: 
         <p className="muted">データは端末内(IndexedDB)にのみ保存されます。Safariのタブとホーム画面アプリは保存領域が別です。</p>
       </div>
 
-      <div className="card">
-        <h2>AI機能</h2>
-        <p className="muted">AI解析(Gemini無料枠)は段階2で追加されます。それまでは手入力・マイ食品・履歴コピーで記録できます。</p>
-        {latest && <p className="muted">最新体重 {f1(latest.weightKg)}kg</p>}
-      </div>
+      <AiSettings />
       {msg && <p className="warn">{msg}</p>}
+    </div>
+  );
+}
+
+function AiSettings() {
+  const [key, setKey] = useState(aiStore.getKey());
+  const [model, setModel] = useState(aiStore.getModelOverride());
+  const [consent, setConsent] = useState(aiStore.hasConsent());
+  const [note, setNote] = useState('');
+  const st = useAiStatus();
+  return (
+    <div className="card">
+      <h2>AI機能(Gemini 無料枠)</h2>
+      <p className="muted">AI解析は、<b>課金(Billing)を有効化していないGoogle Cloudプロジェクト</b>で発行したAPIキーで使ってください。請求アカウントを紐づけると、無料枠を超えた分が課金される可能性があります。</p>
+      <label>APIキー(この端末内にのみ保存。バックアップには含まれません)</label>
+      <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="AIza..." />
+      <label>モデル名(空欄なら既定値 {GEMINI_MODEL})</label>
+      <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={GEMINI_MODEL} />
+      <div className="row" style={{ marginTop: 8 }}>
+        <button onClick={() => { aiStore.setKey(key.trim()); aiStore.setModelOverride(model.trim()); setNote('AI設定を保存しました。'); }}>保存</button>
+        <button className="danger" onClick={() => { aiStore.setKey(''); setKey(''); setNote('APIキーを削除しました。'); }}>キー削除</button>
+      </div>
+      <h3>利用状況</h3>
+      <p>本日 {st.count}/{DAILY_AI_LIMIT} 回(写真・文章・修正のすべてを数えます){st.stopped && <span className="over"> ・停止中</span>}</p>
+      {st.stopped && <button className="sub small" onClick={async () => { await clearStopped(db, toLocalDate()); setNote('停止状態を解除しました。'); }}>停止状態を解除</button>}
+      <p className="muted">Google側の1日の上限は太平洋時間の0時にリセットされます(日本時間で冬は17時頃)。アプリが「本日は停止」でも、夕方以降にGoogle側の枠が回復している場合があります。その場合は「停止状態を解除」を使ってください。</p>
+      <h3>データ送信への同意</h3>
+      <p className="muted">{CONSENT_TEXT}</p>
+      <p className="muted">現在: {consent ? '同意済み' : '未同意(AI機能は無効)'}</p>
+      {consent && <button className="sub small" onClick={() => { aiStore.setConsent(false); setConsent(false); }}>同意を取り消す</button>}
+      {note && <p className="warn">{note}</p>}
     </div>
   );
 }
