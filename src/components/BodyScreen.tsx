@@ -5,6 +5,8 @@ import { toLocalDateTime } from '../lib/dates';
 import type { AppData } from './useAppData';
 import { NumField, f1 } from './ui';
 import { PhotoRunner } from './PhotoRunner';
+import { BodySummary } from './BodySummary';
+import { useConsume } from '../lib/aiTask';
 import { analyzeSheet } from '../lib/aiPrompts';
 import { FIELD_LABEL, NUM_FIELDS, diffMappings, parseNumber, resolveSheet, sheetToRecord, type NumField as NF, type SheetParse } from '../lib/sheet';
 
@@ -16,6 +18,11 @@ const blank = (): BodyComposition => ({
 export function BodyScreen({ data }: { data: AppData }) {
   const [form, setForm] = useState<{ rec: BodyComposition; isNew: boolean; sheet?: { raw: SheetParse['rawItems']; assign: (NF | null)[] } } | null>(null);
   const [scan, setScan] = useState(false);
+  // バックグラウンドで完了した読み取り結果を、確認・修正フォームとして開く(バナーをタップしたとき)
+  useConsume(['sheet'], (t) => {
+    const { p, r } = t.result as { p: SheetParse; r: ReturnType<typeof resolveSheet> };
+    setForm({ rec: { id: newId(), ...sheetToRecord(p, r.values, toLocalDateTime()) }, isNew: true, sheet: { raw: p.rawItems, assign: r.assignments } });
+  });
   const list = [...data.body].sort((a, b) => b.measuredAt.localeCompare(a.measuredAt));
 
   if (scan) {
@@ -24,16 +31,13 @@ export function BodyScreen({ data }: { data: AppData }) {
         <h2>シートを写真で読み取る</h2>
         <PhotoRunner
           notice="撮影前に:氏名・会員番号などが写らないようにしてください(写真は Google に送信されます)。"
+          kind="sheet" label="体組成シートを読み取り中" doneLabel="体組成シートの読み取りが完了しました" tab="body"
           run={async (img) => {
             const p = await analyzeSheet(db, img);
             return { p, r: resolveSheet(p, await db.sheetMappings.toArray()) };
           }}
           onCancel={() => setScan(false)}
-          onResult={({ p, r }) => {
-            const rec = { id: newId(), ...sheetToRecord(p, r.values, toLocalDateTime()) };
-            setForm({ rec, isNew: true, sheet: { raw: p.rawItems, assign: r.assignments } });
-            setScan(false);
-          }} />
+          onStarted={() => setScan(false)} />
       </div>
     );
   }
@@ -98,6 +102,7 @@ export function BodyScreen({ data }: { data: AppData }) {
   return (
     <div>
       <h1>体組成・体重</h1>
+      <BodySummary data={data} />
       <div className="row" style={{ marginBottom: 12 }}>
         <button onClick={() => setForm({ rec: blank(), isNew: true })}>＋ 手入力で記録</button>
         <button className="sub" onClick={() => setScan(true)}>📷 シートを読み取る</button>

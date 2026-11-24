@@ -6,9 +6,12 @@ import { addDays, toLocalDate } from '../lib/dates';
 import type { AppData } from './useAppData';
 import { ItemForm, blankItem } from './ItemForm';
 import { NumField, f1 } from './ui';
-import { AiPanel } from './AiPanel';
+import { AiPanel, Review, type MealReview } from './AiPanel';
+import { useConsume } from '../lib/aiTask';
+import { Bar } from './ui';
 import { PhotoRunner } from './PhotoRunner';
 import { analyzeLabel } from '../lib/aiPrompts';
+import type { LabelParse } from '../lib/sheet';
 
 export async function addItemsToMeal(date: string, category: Category, items: MealItem[]) {
   await db.transaction('rw', db.meals, async () => {
@@ -27,9 +30,29 @@ export function MealsScreen({ data }: { data: AppData }) {
   const [date, setDate] = useState(toLocalDate());
   const [adding, setAdding] = useState<Category | null>(null);
   const [editing, setEditing] = useState<{ entry: MealEntry; idx: number } | null>(null);
+  const [review, setReview] = useState<MealReview | null>(null);
+  const [labelPrefill, setLabelPrefill] = useState<{ item: MealItem; unread: string[] } | null>(null);
   const entries = data.meals.filter((m) => m.date === date);
 
-  if (adding) return <AddPanel data={data} category={adding} onClose={() => setAdding(null)} onAdd={async (items) => { await addItemsToMeal(date, adding, items); setAdding(null); }} />;
+  // バックグラウンドで完了したAI結果を、確認画面として開く(バナーをタップしたとき)
+  useConsume(['meal_photo', 'meal_text'], (t) => {
+    const r = t.result as { items: MealItem[]; notes: string };
+    const c = t.ctx as { date: string; category: Category; source: MealReview['source'] };
+    setReview({ items: r.items, notes: r.notes, ...c });
+  });
+  useConsume(['label'], (t) => {
+    const l = t.result as LabelParse;
+    setLabelPrefill({ item: { ...blankItem(), name: l.name, amount: l.servingAmount, unit: l.servingUnit, caloriesKcal: l.caloriesKcal, proteinG: l.proteinG, fatG: l.fatG, carbsG: l.carbsG, fiberG: l.fiberG, saltG: l.saltG, source: 'ai_label' }, unread: l.unread });
+  });
+
+  if (review) {
+    return <Review review={review} onCancel={() => setReview(null)}
+      onSave={async (items) => { await addItemsToMeal(review.date, review.category, items); setDate(review.date); setReview(null); }} />;
+  }
+  if (labelPrefill) {
+    return <div className="card"><MyFoodEditor initial={null} prefill={labelPrefill} onAiStarted={() => {}} onDone={() => setLabelPrefill(null)} /></div>;
+  }
+  if (adding) return <AddPanel data={data} date={date} category={adding} onClose={() => setAdding(null)} onAiStarted={() => setAdding(null)} onAdd={async (items) => { await addItemsToMeal(date, adding, items); setAdding(null); }} />;
   if (editing) {
     const { entry, idx } = editing;
     return (
@@ -52,7 +75,7 @@ export function MealsScreen({ data }: { data: AppData }) {
         <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
         <button className="sub fit" onClick={() => setDate(addDays(date, 1))}>▶</button>
       </div>
-      <p className="muted" style={{ textAlign: 'center' }}>合計 {Math.round(total.caloriesKcal)}kcal / P {f1(total.proteinG)} F {f1(total.fatG)} C {f1(total.carbsG)}</p>
+      <DaySummary total={total} targets={data.targets} />
       {CATEGORIES.map((c) => {
         const es = entries.filter((e) => e.category === c);
         const items = es.flatMap((e) => e.items.map((it, idx) => ({ e, it, idx })));
@@ -77,8 +100,26 @@ export function MealsScreen({ data }: { data: AppData }) {
 
 type Tab = 'manual' | 'photo' | 'text' | 'my' | 'history';
 
-function AddPanel({ data, category, onClose, onAdd }: {
-  data: AppData; category: Category; onClose: () => void; onAdd: (items: MealItem[]) => void;
+/** その日の摂取 / 目標(簡易表示)。目標は現在の目標値 */
+function DaySummary({ total, targets }: { total: ReturnType<typeof sumItems>; targets: AppData['targets'] }) {
+  if (!targets) return null;
+  const rows: [string, number, number][] = [['P', total.proteinG, targets.proteinG], ['F', total.fatG, targets.fatG], ['C', total.carbsG, targets.carbsG]];
+  const over = total.caloriesKcal > targets.calories;
+  return (
+    <div className="card" style={{ padding: 10 }}>
+      <div className="row between"><b>摂取 / 目標</b><span className={over ? 'over' : ''}><b>{Math.round(total.caloriesKcal)}</b> / {targets.calories}kcal</span></div>
+      <Bar value={total.caloriesKcal} max={targets.calories} over={over} />
+      <div className="grid3 mini">
+        {rows.map(([n, v, t]) => (
+          <div key={n}>{n} {f1(v)} / {t}g<Bar value={v} max={t} over={v > t * 1.1} /></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AddPanel({ data, date, category, onClose, onAdd, onAiStarted }: {
+  data: AppData; date: string; category: Category; onClose: () => void; onAdd: (items: MealItem[]) => void; onAiStarted: () => void;
 }) {
   const [tab, setTab] = useState<Tab>('manual');
   return (
@@ -90,19 +131,19 @@ function AddPanel({ data, category, onClose, onAdd }: {
         ))}
       </div>
       {tab === 'manual' && <ItemForm initial={blankItem()} submitLabel="追加" showRescale={false} onCancel={onClose} onSubmit={(it) => onAdd([it])} />}
-      {(tab === 'photo' || tab === 'text') && <AiPanel key={tab} mode={tab} onSave={onAdd} onCancel={onClose} />}
-      {tab === 'my' && <MyFoodPicker foods={data.myFoods} onPick={(it) => onAdd([it])} />}
+      {(tab === 'photo' || tab === 'text') && <AiPanel key={tab} mode={tab} date={date} category={category} onStarted={onAiStarted} onCancel={onClose} />}
+      {tab === 'my' && <MyFoodPicker foods={data.myFoods} onPick={(it) => onAdd([it])} onAiStarted={onAiStarted} />}
       {tab === 'history' && <HistoryPicker data={data} onPick={(it) => onAdd([it])} />}
     </div>
   );
 }
 
-function MyFoodPicker({ foods, onPick }: { foods: MyFood[]; onPick: (i: MealItem) => void }) {
+function MyFoodPicker({ foods, onPick, onAiStarted }: { foods: MyFood[]; onPick: (i: MealItem) => void; onAiStarted: () => void }) {
   const [sel, setSel] = useState<MyFood | null>(null);
   const [n, setN] = useState(1);
   const [edit, setEdit] = useState<MyFood | 'new' | null>(null);
 
-  if (edit) return <MyFoodEditor initial={edit === 'new' ? null : edit} onDone={() => setEdit(null)} />;
+  if (edit) return <MyFoodEditor initial={edit === 'new' ? null : edit} onAiStarted={onAiStarted} onDone={() => setEdit(null)} />;
   if (sel) {
     const base: MealItem = { name: sel.name, amount: sel.servingAmount, unit: sel.servingUnit, caloriesKcal: sel.caloriesKcal, proteinG: sel.proteinG, fatG: sel.fatG, carbsG: sel.carbsG, fiberG: sel.fiberG, saltG: sel.saltG, source: 'my_food' };
     const it = { ...scaleItem(base, n), source: 'my_food' as const };
@@ -138,20 +179,19 @@ function MyFoodPicker({ foods, onPick }: { foods: MyFood[]; onPick: (i: MealItem
   );
 }
 
-function MyFoodEditor({ initial, onDone }: { initial: MyFood | null; onDone: () => void }) {
+function MyFoodEditor({ initial, prefill, onDone, onAiStarted }: {
+  initial: MyFood | null; prefill?: { item: MealItem; unread: string[] }; onDone: () => void; onAiStarted: () => void;
+}) {
   const [category, setCategory] = useState<MyFood['category']>(initial?.category ?? 'food');
   const [scan, setScan] = useState(false);
-  const [scanned, setScanned] = useState<{ item: MealItem; unread: string[] } | null>(null);
+  const scanned = prefill ?? null;
   if (scan) {
     return (
       <div>
         <h3>栄養成分表示を写真で読み取る</h3>
-        <PhotoRunner notice="パッケージの栄養成分表示の部分を撮影してください。" onCancel={() => setScan(false)}
-          run={(img) => analyzeLabel(db, img)}
-          onResult={(l) => {
-            setScanned({ item: { ...blankItem(), name: l.name, amount: l.servingAmount, unit: l.servingUnit, caloriesKcal: l.caloriesKcal, proteinG: l.proteinG, fatG: l.fatG, carbsG: l.carbsG, fiberG: l.fiberG, saltG: l.saltG, source: 'ai_label' }, unread: l.unread });
-            setScan(false);
-          }} />
+        <PhotoRunner notice="パッケージの栄養成分表示の部分を撮影してください。" kind="label" label="栄養成分表示を読み取り中" doneLabel="栄養成分表示の読み取りが完了しました" tab="meals"
+          onCancel={() => setScan(false)} onStarted={() => { setScan(false); onDone(); onAiStarted(); }}
+          run={(img) => analyzeLabel(db, img)} />
       </div>
     );
   }

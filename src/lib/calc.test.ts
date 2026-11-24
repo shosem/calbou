@@ -128,3 +128,28 @@ describe('バックアップ', () => {
   });
   it('不正な形式は拒否', () => expect(() => parseBackup('{"a":1}')).toThrow());
 });
+
+import { compareMetric, metricSeries } from './calc';
+describe('体組成の比較', () => {
+  const recs = [body('2026-10-20T07:00', 72), body('2026-11-10T07:00', 71), body('2026-11-18T07:00', 70), body('2026-11-20T07:00', 69), body('2026-11-24T07:00', 68), body('2026-11-24T20:00', 67)];
+  const s = metricSeries(recs, (b) => b.weightKg);
+  it('同日は最新値、現在値は指定日以前の最新', () => {
+    expect(s.find((p) => p.date === '2026-11-24')!.v).toBe(67);
+    expect(compareMetric(s, '2026-11-24', 'prev').current!.v).toBe(67);
+    expect(compareMetric(s, '2026-11-22', 'prev').current!.v).toBe(69); // 当日が無ければ直近の過去
+  });
+  it('前回との差', () => expect(compareMetric(s, '2026-11-24', 'prev').diff).toBe(67 - 69));
+  it('7日平均(現在値自身を含めない)', () => {
+    const r = compareMetric(s, '2026-11-24', 'avg7'); // 11/17〜11/23: 70, 69
+    expect(r.base).toBe(69.5); expect(r.diff).toBeCloseTo(-2.5);
+  });
+  it('1ヶ月平均', () => {
+    const r = compareMetric(s, '2026-11-24', 'avg30'); // 10/25〜11/23: 71, 70, 69
+    expect(r.base).toBe(70);
+  });
+  it('比較対象が無ければ差は null、記録が無ければ現在値も null', () => {
+    expect(compareMetric(metricSeries([body('2026-11-24T07:00', 67)], (b) => b.weightKg), '2026-11-24', 'prev').diff).toBeNull();
+    expect(compareMetric([], '2026-11-24', 'avg7').current).toBeNull();
+    expect(metricSeries([body('2026-11-24T07:00', 67)], (b) => b.bodyFatPercent)).toEqual([]);
+  });
+});

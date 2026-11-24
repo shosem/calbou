@@ -9,6 +9,8 @@ import { HomeScreen } from './components/HomeScreen';
 import { MealsScreen } from './components/MealsScreen';
 import { BodyScreen } from './components/BodyScreen';
 import { GraphScreen } from './components/GraphScreen';
+import { AiBanner } from './components/AiBanner';
+import { setActiveTab } from './lib/aiTask';
 
 type Tab = 'home' | 'meals' | 'body' | 'graph' | 'settings';
 const TABS: [Tab, string][] = [['home', 'ホーム'], ['meals', '食事'], ['body', '体組成'], ['graph', 'グラフ'], ['settings', '設定']];
@@ -40,6 +42,8 @@ export default function App() {
     })();
   }, []);
 
+  useEffect(() => { setActiveTab(tab); }, [tab]);
+
   if (!data.ready) return <div className="app muted">読み込み中…</div>;
 
   if (!data.settings?.onboarded || !data.latest) {
@@ -63,11 +67,13 @@ export default function App() {
 
   return (
     <div className="app">
-      {tab === 'home' && <HomeScreen data={data} go={setTab} />}
-      {tab === 'meals' && <MealsScreen data={data} />}
-      {tab === 'body' && <BodyScreen data={data} />}
-      {tab === 'graph' && <GraphScreen data={data} />}
-      {tab === 'settings' && <SettingsScreen data={data} persisted={persisted} />}
+      {/* 全画面を常に配置し、非表示にするだけにする。画面を切り替えても入力中の内容やAI処理の状態が失われない */}
+      <div hidden={tab !== 'home'}><HomeScreen data={data} go={setTab} /></div>
+      <div hidden={tab !== 'meals'}><MealsScreen data={data} /></div>
+      <div hidden={tab !== 'body'}><BodyScreen data={data} /></div>
+      <div hidden={tab !== 'graph'}><GraphScreen data={data} /></div>
+      <div hidden={tab !== 'settings'}><SettingsScreen data={data} persisted={persisted} /></div>
+      <AiBanner go={setTab} />
       <nav>{TABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</nav>
     </div>
   );

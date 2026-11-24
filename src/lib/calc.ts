@@ -217,3 +217,41 @@ export function backupDue(lastBackupAt: string | null, now: Date = new Date()): 
   if (!lastBackupAt) return true;
   return now.getTime() - new Date(lastBackupAt).getTime() > BACKUP_REMIND_DAYS * 86400000;
 }
+
+// ---- 体組成の比較(前回 / 7日平均 / 1ヶ月平均との差) ----
+export type CompareMode = 'prev' | 'avg7' | 'avg30';
+export interface MetricPoint { date: string; at: string; v: number }
+
+/** 指標ごとの時系列(同日は最新値)。get が null を返す記録は無視する */
+export function metricSeries(records: BodyComposition[], get: (b: BodyComposition) => number | null): MetricPoint[] {
+  const byDate = new Map<string, MetricPoint>();
+  for (const b of records) {
+    const v = get(b);
+    if (v == null) continue;
+    const date = b.measuredAt.slice(0, 10);
+    const cur = byDate.get(date);
+    if (!cur || b.measuredAt > cur.at) byDate.set(date, { date, at: b.measuredAt, v });
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * onDate 以前で最新の値を「現在値」とし、基準との差を出す。
+ * prev: その前の測定日の値 / avg7・avg30: 現在値の測定日の前日までの7日間・30日間の平均(現在値自身は含めない)
+ */
+export function compareMetric(series: MetricPoint[], onDate: string, mode: CompareMode) {
+  const upto = series.filter((p) => p.date <= onDate);
+  const current = upto[upto.length - 1] ?? null;
+  if (!current) return { current: null, base: null as number | null, diff: null as number | null };
+  let base: number | null = null;
+  if (mode === 'prev') {
+    base = upto.length >= 2 ? upto[upto.length - 2].v : null;
+  } else {
+    const days = mode === 'avg7' ? 7 : 30;
+    const from = addDays(current.date, -days);
+    const w = series.filter((p) => p.date >= from && p.date < current.date);
+    base = avg(w.map((p) => p.v));
+  }
+  return { current, base, diff: base == null ? null : current.v - base };
+}
+function avg(a: number[]): number | null { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; }
